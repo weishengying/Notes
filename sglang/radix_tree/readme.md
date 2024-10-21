@@ -1,6 +1,6 @@
 本节主要更详细的探讨 radix-tree 的实现细节。
 
-本目录中有三个文件，都是从 sglang 中 copy 下来的，方便独立的测试和阅读源码。对应官方 [mem_cache](https://github.com/sgl-project/sglang/tree/main/python/sglang/srt/mem_cache) 目录下，
+src 目录中有三个文件，都是从 sglang 中 copy 下来的，方便独立的测试和阅读源码。对应官方 [mem_cache](https://github.com/sgl-project/sglang/tree/main/python/sglang/srt/mem_cache) 目录下，
 这里 copy 的是 commit:c996e8ccd415f6e1077ace5bc645d19a8dd40203 中的代码，增加了很多详细的注释，对理解有一些帮助。
 
 
