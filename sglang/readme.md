@@ -10,18 +10,34 @@ pip install flashinfer -i https://flashinfer.ai/whl/cu121/torch2.4/
 
 启动服务
 ```bash
-python3 -m sglang.launch_server --model-path /mnt/shared/maas/ai_story/llama3_as_8b_en_1_v42_llama_0912 --mem-fraction-static 0.7 
+python3 -m sglang.launch_server --model-path ${model_path} --mem-fraction-static 0.7 
+```
+
+```bash
+python -m sglang.launch_server \
+       --model-path ${model_path} \
+       --port 8000 \
+       --mem-fraction-static  0.8 \
+       --disable-custom-all-reduce \
+       --load-balance-method round_robin \
+       --context-length 4096 \
+       --tp-size ${tp_size} \
+       --enable-mixed-chunk \
+       --chunked-prefill-size 512 \ 
+       --kv-cache-dtype auto \
+       --schedule-policy lpm \
+       --dtype  auto \
+       --enable-p2p-check
 ```
 
 发送请求
 ```bash
-curl http://localhost:30000/generate \
+curl http://localhost:8000/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "text": "The capital city of France is",
+    "text": "What are we having for dinner?",
     "sampling_params": {
-      "max_new_tokens": 16,
-      "temperature": 0
+      "max_new_tokens": 16
     }
   }'
 ```

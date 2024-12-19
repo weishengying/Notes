@@ -1,22 +1,23 @@
-本节主要更详细的探讨 radix-tree 的实现细节。
+本节主要更详细的探讨 radix-tree 的实现细节， sglang 对应的论文地址 [sglang](https://arxiv.org/pdf/2312.07104)，
+对应的测试代码仓库: [测试代码](https://github.com/weishengying/Notes/tree/main/sglang/radix_tree/src)
 
 src 目录中有三个文件，都是从 sglang 中 copy 下来的，方便独立的测试和阅读源码。对应官方 [mem_cache](https://github.com/sgl-project/sglang/tree/main/python/sglang/srt/mem_cache) 目录下，
 这里 copy 的是 commit:c996e8ccd415f6e1077ace5bc645d19a8dd40203 中的代码，增加了很多详细的注释，对理解有一些帮助。
 
 
-## prefix cache
+# prefix cache
 
-prefix的基本逻辑就是：把输入的 prompot_token_ids 对应的 kv 值存起来，下次输入类似的 prompot_token_ids 就直接从 cache 中取出能用的部分，省去一些重复计算。
+prefix cache 的基本需求就是：把输入的 prompot_token_ids 对应的 kv 值存起来，下次输入类似的 prompot_token_ids 时就直接从 cache 中取出能用的部分，省去一些重复计算。
 
-举个例子：第一次输入的 prompt 是 `"hello, what your first name"`，就把这几个 token 的 kv 值存起来，下次输入一个类似的问题如`"hello, what your second name"` 就直接从 cache 中取出来前面`"hello, what your"`这部分 token 的 kv 值， 只需要计算 `"second name"`这些字符对应 token 的 kv 值。
+举个例子：假设第一次输入的 prompt 是 `"hello, what your first name"`，就把这几个 token 的 kv 值存起来，下次输入一个类似的问题如`"hello, what your second name"` 时就直接从 cache 中取出来前面`"hello, what your"`这部分 token 的 kv 值， 只需要计算 `"second name"`这些字符对应 token 的 kv 值。
 
-这个需求更精准的描述就是：**把一些计算过 kv 值的 token 值记录起来，下次输入一个新的 promp 时，尽可能的找到输入 prompt_token_ids 中前 n 个已经被缓存了的 kv 的 token （姑且叫做前向最大匹配），将这部分 token 的 kv 值直接从 kv_pool 中取出来用，然后只需计算出剩余的 token 的 kv 值。**
+这个需求更精准的描述就是：**把一些计算过 kv 值的 token 值记录缓存起来，下次输入一个新的 prompt_token_ids 时，尽可能的找到输入 prompt_token_ids 中前 n 个已经被缓存了的 kv 的 token （姑且叫做前向最大匹配），将这部分 token 的 kv 值直接从 kv_pool 中取出来用，然后只需计算出剩余的 token 的 kv 值。**
 
 第一个需要解决的问题就是：如何记录缓存了的 kv 值的 token， 后面输入的 prompt 能够快速高效的查找出其前向最大匹配的 token（这些 token 的 kv 值已经被计算过了）。
 
 第二个问题是：如何分散存储 kv 值, sglang 同样也是使用分散的储存策略（和vllm类似），这里不再赘述。
 
-对于第一个问题，sglang 使用了 radix-tree 来实现, 类似字典树。下面画一些图和一个简单的流程配合代码注释来说明一下。
+对于第一个问题，sglang 使用了 radix-tree 来实现, 类似字典树。下面画一些图和一个简单的流程并配合代码注释来说明一下。
 
 **1. 输入 prompt = "hello, what your first name"**
 
@@ -27,6 +28,8 @@ prefix的基本逻辑就是：把输入的 prompot_token_ids 对应的 kv 值存
 #tokens: 27
 ```
 ![Alt text](image.png)
+
+**需要注意 node 子节点的储存方式，是一个map，key 是子节点储存的 token_id 的第一个（对应上图中的 “h”），方便快速匹配查找**
 
 **2. 输入 prompt = "hello, what your second name"**
 
@@ -42,6 +45,8 @@ prefix的基本逻辑就是：把输入的 prompot_token_ids 对应的 kv 值存
 
 第二次输入的 prompt 插入 radix-tree 时，节点发了一次 split：
 ![Alt text](image-2.png)
+
+**split 操作的目的：为了后续输入的 prompt 能够尽可能的最大的匹配前面 n 个 token**
 
 对应的代码逻辑如下：
 ```python
@@ -106,7 +111,7 @@ def evict(self, num_tokens: int, evict_callback: Callable):
         if len(x.parent.children) == 0: # 一些叶子节点被删除后，可能会产生新的叶子节点，收集这些新的叶子节点
             heapq.heappush(leaves, x.parent)
 ```
-按照叶子节点最后一次的访问时间构建一个最小堆，然后从堆中弹出最小的元素，如果该元素被其他请求使用，则跳过，否则释放该元素，并删除该元素及其所有的 child node。
+按照叶子节点最后一次的访问时间构建一个最小堆，然后从堆中弹出最小的元素，如果该元素被其他请求使用，则跳过，否则释放该元素，并删除该元素（叶子节点）及其所有的。
 
 **4.获取一个 prompt 的前向最大匹配token的 kv 值**
 
@@ -176,4 +181,9 @@ evict [5, 6, 7, 8]
 对应的图：
 ![Alt text](image-3.png)
 
-`[5,6,7,8]`这个叶子节点的访问时间更早，所以被
+`[5,6,7,8]`这个叶子节点的访问时间更早，所以被删除掉。
+
+最后看看论文里面的图（浅绿色节点表示新插入的节点）：
+![Alt text](image-4.png)
+
+总结一下：radix-tree 设计的目的就是缓存 prompt cache，整体设计追求的就是两点：快速查找；最大匹配，这也是 split 的原因，更多细节可以查看仓库代码中的代码注释和测试代码。
